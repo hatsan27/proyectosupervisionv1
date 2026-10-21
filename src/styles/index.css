@@ -1,0 +1,10 @@
+/* Punto de entrada de estilos. El orden importa: responsive.css va al final. */
+@import './base.css';
+@import './components.css';
+@import './login.css';
+@import './layout.css';
+@import './dashboard.css';
+@import './avisos.css';
+@import './solicitudes.css';
+@import './forms.css';
+@import './responsive.css';

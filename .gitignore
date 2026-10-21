@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+.firebaserc
+*.log
+.firebase/
+# Nunca subir llaves privadas de cuentas de servicio
+*serviceAccount*.json

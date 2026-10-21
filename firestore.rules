@@ -1,0 +1,94 @@
+rules_version = '2';
+
+// Reglas de seguridad de Cloud Firestore
+// Supervisión Escolar 072 · Actividades 5, 7 y 8 del cronograma.
+//
+// El control de acceso no depende de ocultar botones: cada lectura y escritura
+// se verifica aquí según el rol y el plantel guardados en usuarios/{uid}.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- Funciones auxiliares ----------
+    function sesionIniciada() {
+      return request.auth != null;
+    }
+
+    function perfilRef() {
+      return /databases/$(database)/documents/usuarios/$(request.auth.uid);
+    }
+
+    function perfil() {
+      return get(perfilRef()).data;
+    }
+
+    // La cuenta existe en "usuarios" y está marcada como activa.
+    function usuarioActivo() {
+      return sesionIniciada()
+        && exists(perfilRef())
+        && perfil().activo == true;
+    }
+
+    function tieneRol(rol) {
+      return usuarioActivo() && perfil().rol == rol;
+    }
+
+    function esSupervisora()   { return tieneRol('supervisora'); }
+    function esAdministrativa() { return tieneRol('administrativa'); }
+    function esDirectora()     { return tieneRol('directora'); }
+    function esPersonalSupervision() { return esSupervisora() || esAdministrativa(); }
+
+    // ---------- usuarios ----------
+    // Cada persona lee su propio perfil; la supervisora puede consultar todos.
+    // Los perfiles se crean y modifican desde Firebase Console (no desde la web).
+    match /usuarios/{uid} {
+      allow read: if sesionIniciada() && (request.auth.uid == uid || esSupervisora());
+      allow write: if false;
+    }
+
+    // ---------- planteles ----------
+    // Catálogo de planteles de la zona. Lectura para cuentas activas.
+    match /planteles/{plantelId} {
+      allow read: if usuarioActivo();
+      allow write: if false;
+    }
+
+    // ---------- avisos (RF-03, RF-10) ----------
+    match /avisos/{avisoId} {
+
+      // Lectura:
+      //  · supervisora y administrativa: todos los avisos de la zona.
+      //  · directora: solo avisos generales ('todos') o dirigidos a su plantel.
+      allow read: if esPersonalSupervision()
+        || (esDirectora()
+            && resource.data.destinatarios.hasAny(['todos', perfil().plantelId]));
+
+      // Publicación: únicamente la supervisora, con datos completos y válidos.
+      allow create: if esSupervisora() && avisoValido();
+
+      // Edición y eliminación: únicamente la supervisora.
+      allow update: if esSupervisora() && avisoValido()
+        && request.resource.data.creadoPor == resource.data.creadoPor
+        && request.resource.data.publicadoEn == resource.data.publicadoEn;
+      allow delete: if esSupervisora();
+
+      function avisoValido() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['titulo', 'contenido', 'creadoPor', 'autorNombre', 'publicadoEn', 'destinatarios'])
+          && d.keys().hasAll(['titulo', 'contenido', 'creadoPor', 'publicadoEn', 'destinatarios'])
+          && d.titulo is string && d.titulo.size() >= 3 && d.titulo.size() <= 150
+          && d.contenido is string && d.contenido.size() >= 3 && d.contenido.size() <= 5000
+          && d.destinatarios is list && d.destinatarios.size() >= 1 && d.destinatarios.size() <= 50
+          && (!('autorNombre' in d) || d.autorNombre is string)
+          && (request.method == 'update'
+              || (d.creadoPor == request.auth.uid && d.publicadoEn == request.time));
+      }
+    }
+
+    // Todo lo demás queda bloqueado hasta que se diseñen sus reglas
+    // (solicitudes, entregas, formatos y formularios: actividades 9 a 12).
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
