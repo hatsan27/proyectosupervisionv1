@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Send } from 'lucide-react';
 import PageHeading from '../components/ui/PageHeading';
 import Alert from '../components/ui/Alert';
+import DestinatariosSelector from '../components/forms/DestinatariosSelector';
 import { useAuth } from '../hooks/useAuth';
 import { usePlanteles } from '../hooks/usePlanteles';
 import { publicarAviso } from '../services/avisosService';
@@ -118,63 +119,19 @@ export default function NuevoAvisoPage() {
           </div>
         </div>
 
-        <fieldset className="form-field" style={{ border: 0, padding: 0, margin: '0 0 24px' }}>
-          <legend className="form-label" style={{ fontSize: 12, fontWeight: 700, color: '#34474c', marginBottom: 9 }}>
-            Destinatarios
-          </legend>
-          <div className="choice-group">
-            <label className="choice">
-              <input
-                type="radio"
-                name="alcance"
-                value="todos"
-                checked={alcance === 'todos'}
-                onChange={() => {
-                  setAlcance('todos');
-                  limpiar('destinatarios');
-                }}
-                disabled={publicando}
-              />
-              Todos los planteles
-            </label>
-            <label className="choice">
-              <input
-                type="radio"
-                name="alcance"
-                value="seleccion"
-                checked={alcance === 'seleccion'}
-                onChange={() => setAlcance('seleccion')}
-                disabled={publicando}
-              />
-              Planteles específicos
-            </label>
-          </div>
-
-          {alcance === 'seleccion' && (
-            <div className="plantel-grid">
-              {cargandoPlanteles && <span className="form-help">Cargando planteles…</span>}
-              {!cargandoPlanteles && planteles.length === 0 && (
-                <span className="form-help">No hay planteles registrados en la colección "planteles".</span>
-              )}
-              {planteles.map((p) => (
-                <label key={p.id} className="choice">
-                  <input
-                    type="checkbox"
-                    checked={seleccion.includes(p.id)}
-                    onChange={() => alternarPlantel(p.id)}
-                    disabled={publicando}
-                  />
-                  {p.nombre ?? p.id}
-                </label>
-              ))}
-            </div>
-          )}
-          {errores.destinatarios && (
-            <div className="form-help">
-              <span className="form-error">{errores.destinatarios}</span>
-            </div>
-          )}
-        </fieldset>
+        <DestinatariosSelector
+          alcance={alcance}
+          onAlcance={(valor) => {
+            setAlcance(valor);
+            limpiar('destinatarios');
+          }}
+          seleccion={seleccion}
+          onAlternar={alternarPlantel}
+          planteles={planteles}
+          cargando={cargandoPlanteles}
+          disabled={publicando}
+          error={errores.destinatarios}
+        />
 
         <div className="form-actions">
           <Link to="/avisos" className="btn btn-outline">

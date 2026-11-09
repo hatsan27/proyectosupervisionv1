@@ -28,6 +28,7 @@ const aFirestore = (obj) => ({
       if (typeof v === 'boolean') return [k, { booleanValue: v }];
       if (Array.isArray(v)) return [k, { arrayValue: { values: v.map((s) => ({ stringValue: s })) } }];
       if (v instanceof Date) return [k, { timestampValue: v.toISOString() }];
+      if (typeof v === 'number') return [k, { integerValue: String(v) }];
       return [k, { stringValue: String(v) }];
     }),
   ),
@@ -79,6 +80,26 @@ await escribir('avisos/aviso-sorjuana', {
   titulo: 'Visita de acompañamiento',
   contenido: 'La próxima semana se realizará la visita de acompañamiento técnico-pedagógico a su plantel.',
   destinatarios: ['jn-sor-juana'], creadoPor: sup, autorNombre: 'Supervisora de Prueba', publicadoEn: hace(5),
+});
+
+const enDias = (dias) => new Date(Date.now() + dias * 864e5);
+await escribir('solicitudes/sol-plan-trabajo', {
+  titulo: 'Plan de trabajo del segundo periodo',
+  descripcion: 'Envíe el plan de trabajo del segundo periodo en PDF, firmado por la directora.',
+  fechaLimite: enDias(7), plantelIds: ['jn-benito-juarez', 'jn-sor-juana', 'jn-emiliano-zapata'],
+  estado: 'abierta', creadoPor: sup, autorNombre: 'Supervisora de Prueba', creadoEn: hace(2),
+});
+await escribir('solicitudes/sol-inscripcion', {
+  titulo: 'Estadística de inscripción',
+  descripcion: 'Formato de estadística de inicio de ciclo escolar en Excel.',
+  fechaLimite: enDias(3), plantelIds: ['jn-benito-juarez'],
+  estado: 'abierta', creadoPor: sup, autorNombre: 'Supervisora de Prueba', creadoEn: hace(1),
+});
+await escribir('solicitudes/sol-cerrada', {
+  titulo: 'Croquis del plantel',
+  descripcion: 'Solicitud cerrada para pruebas.',
+  fechaLimite: hace(1), plantelIds: ['jn-benito-juarez', 'jn-sor-juana'],
+  estado: 'cerrada', creadoPor: sup, autorNombre: 'Supervisora de Prueba', creadoEn: hace(10),
 });
 
 console.log('Datos de prueba cargados. Cuentas (contraseña: %s):', PASS);

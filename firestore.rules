@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // Reglas de seguridad de Cloud Firestore
-// Supervisión Escolar 072 · Actividades 5, 7 y 8 del cronograma.
+// Supervisión Escolar 072 · Actividades 5 y 7 a 12 del cronograma.
 //
 // El control de acceso no depende de ocultar botones: cada lectura y escritura
 // se verifica aquí según el rol y el plantel guardados en usuarios/{uid}.
@@ -85,8 +85,228 @@ service cloud.firestore {
       }
     }
 
-    // Todo lo demás queda bloqueado hasta que se diseñen sus reglas
-    // (solicitudes, entregas, formatos y formularios: actividades 9 a 12).
+    // ---------- solicitudes (RF-04, RF-10) · actividad 9 ----------
+    // plantelIds guarda la lista explícita de planteles a los que va dirigida.
+    match /solicitudes/{solicitudId} {
+
+      // Lectura: personal de supervisión ve todas; la directora, solo las de su plantel.
+      allow read: if esPersonalSupervision()
+        || (esDirectora() && resource.data.plantelIds.hasAny([perfil().plantelId]));
+
+      // Creación: supervisora o personal administrativo.
+      allow create: if esPersonalSupervision() && solicitudValida()
+        && request.resource.data.creadoPor == request.auth.uid
+        && request.resource.data.creadoEn == request.time
+        && request.resource.data.estado == 'abierta';
+
+      // Edición, cierre o reapertura: quien la creó o la supervisora.
+      allow update: if esPersonalSupervision()
+        && (resource.data.creadoPor == request.auth.uid || esSupervisora())
+        && solicitudValida()
+        && request.resource.data.creadoPor == resource.data.creadoPor
+        && request.resource.data.creadoEn == resource.data.creadoEn;
+
+      allow delete: if esSupervisora();
+
+      function solicitudValida() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['titulo', 'descripcion', 'fechaLimite', 'plantelIds', 'estado', 'creadoPor', 'autorNombre', 'creadoEn'])
+          && d.keys().hasAll(['titulo', 'descripcion', 'fechaLimite', 'plantelIds', 'estado', 'creadoPor', 'creadoEn'])
+          && d.titulo is string && d.titulo.size() >= 3 && d.titulo.size() <= 150
+          && d.descripcion is string && d.descripcion.size() <= 5000
+          && d.fechaLimite is timestamp
+          && d.plantelIds is list && d.plantelIds.size() >= 1 && d.plantelIds.size() <= 100
+          && d.estado in ['abierta', 'cerrada']
+          && (!('autorNombre' in d) || d.autorNombre is string);
+      }
+    }
+
+    // ---------- entregas (RF-05, RF-06, RF-10) · actividad 9 ----------
+    // Una entrega por plantel y solicitud. ID del documento: {solicitudId}_{plantelId}.
+    // El archivo vive en Cloud Storage; aquí solo se guarda su referencia.
+    match /entregas/{entregaId} {
+
+      function solicitud(id) {
+        return get(/databases/$(database)/documents/solicitudes/$(id)).data;
+      }
+
+      // Lectura: personal de supervisión ve todas; la directora, solo las de su plantel.
+      allow read: if esPersonalSupervision()
+        || (esDirectora() && resource.data.plantelId == perfil().plantelId);
+
+      // Envío: la directora del plantel, mientras la solicitud esté abierta.
+      allow create: if esDirectora() && envioValido();
+
+      // Reenvío (si no ha sido aceptada) o revisión por el personal de supervisión.
+      allow update: if (esDirectora()
+                        && resource.data.plantelId == perfil().plantelId
+                        && resource.data.estado != 'aceptado'
+                        && envioValido())
+                    || (esPersonalSupervision() && revisionValida());
+
+      allow delete: if false;
+
+      function envioValido() {
+        let d = request.resource.data;
+        let sol = solicitud(d.solicitudId);
+        return d.keys().hasOnly(['solicitudId', 'plantelId', 'estado', 'archivo', 'enviadoPor', 'enviadoEn'])
+          && entregaId == d.solicitudId + '_' + d.plantelId
+          && d.plantelId == perfil().plantelId
+          && sol.plantelIds.hasAny([d.plantelId])
+          && sol.estado == 'abierta'
+          && d.estado == 'entregado'
+          && d.enviadoPor == request.auth.uid
+          && d.enviadoEn == request.time
+          && d.archivo is map
+          && d.archivo.keys().hasOnly(['nombre', 'ruta', 'tipo', 'tamano'])
+          && d.archivo.nombre is string
+          && d.archivo.ruta is string
+          && d.archivo.ruta.matches('entregas/' + d.solicitudId + '/' + d.plantelId + '/.+')
+          && d.archivo.tamano is int && d.archivo.tamano <= 10 * 1024 * 1024;
+      }
+
+      function revisionValida() {
+        let d = request.resource.data;
+        return d.diff(resource.data).affectedKeys().hasOnly(['estado', 'comentarioRevision', 'revisadoPor', 'revisadoEn'])
+          && d.estado in ['correccion', 'aceptado']
+          && d.revisadoPor == request.auth.uid
+          && d.revisadoEn == request.time
+          && d.comentarioRevision is string && d.comentarioRevision.size() <= 1000
+          && (d.estado != 'correccion' || d.comentarioRevision.size() >= 3);
+      }
+    }
+
+    // ---------- formatos (RF-07) · actividad 10 ----------
+    // Banco de formatos. vigente = false significa retirado (histórico solo para supervisión).
+    match /formatos/{formatoId} {
+
+      // Lectura: supervisión ve todos; cualquier cuenta activa ve los vigentes.
+      allow read: if esPersonalSupervision()
+        || (usuarioActivo() && resource.data.vigente == true);
+
+      allow create: if esPersonalSupervision() && formatoValido()
+        && request.resource.data.subidoPor == request.auth.uid
+        && request.resource.data.subidoEn == request.time
+        && request.resource.data.actualizadoEn == request.time;
+
+      // Sustituir archivo, editar datos, retirar o reactivar.
+      allow update: if esPersonalSupervision() && formatoValido()
+        && request.resource.data.subidoPor == resource.data.subidoPor
+        && request.resource.data.subidoEn == resource.data.subidoEn
+        && request.resource.data.actualizadoEn == request.time;
+
+      // Eliminación definitiva: solo la supervisora.
+      allow delete: if esSupervisora();
+
+      function formatoValido() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['titulo', 'descripcion', 'categoria', 'archivo', 'vigente', 'subidoPor', 'subidoEn', 'actualizadoEn'])
+          && d.keys().hasAll(['titulo', 'descripcion', 'categoria', 'archivo', 'vigente', 'subidoPor', 'subidoEn', 'actualizadoEn'])
+          && d.titulo is string && d.titulo.size() >= 3 && d.titulo.size() <= 150
+          && d.descripcion is string && d.descripcion.size() <= 1000
+          && d.categoria in ['planeacion', 'estadistica', 'control-escolar', 'administrativo', 'otros']
+          && d.vigente is bool
+          && d.archivo is map
+          && d.archivo.keys().hasOnly(['nombre', 'ruta', 'tipo', 'tamano'])
+          && d.archivo.nombre is string
+          && d.archivo.ruta is string
+          && d.archivo.ruta.matches('formatos/' + formatoId + '/.+')
+          && d.archivo.tamano is int && d.archivo.tamano <= 10 * 1024 * 1024;
+      }
+    }
+
+    // ---------- formularios (RF-08, RF-10) · actividad 11 ----------
+    // Estados: borrador → publicado ⇄ cerrado. Los campos solo cambian en borrador.
+    match /formularios/{formularioId} {
+
+      // Lectura: supervisión ve todos; la directora, los publicados o cerrados de su plantel.
+      allow read: if esPersonalSupervision()
+        || (esDirectora()
+            && resource.data.estado in ['publicado', 'cerrado']
+            && resource.data.plantelIds.hasAny([perfil().plantelId]));
+
+      allow create: if esPersonalSupervision() && formularioValido()
+        && request.resource.data.creadoPor == request.auth.uid
+        && request.resource.data.creadoEn == request.time
+        && request.resource.data.estado == 'borrador';
+
+      // Editar, publicar, cerrar o reabrir: quien lo creó o la supervisora.
+      allow update: if esPersonalSupervision()
+        && (resource.data.creadoPor == request.auth.uid || esSupervisora())
+        && formularioValido()
+        && request.resource.data.creadoPor == resource.data.creadoPor
+        && request.resource.data.creadoEn == resource.data.creadoEn
+        && transicionValida(resource.data.estado, request.resource.data.estado)
+        && (resource.data.estado == 'borrador'
+            || (request.resource.data.campos == resource.data.campos
+                && request.resource.data.plantelIds == resource.data.plantelIds));
+
+      // Eliminar: la supervisora, o quien lo creó mientras siga en borrador.
+      allow delete: if esSupervisora()
+        || (esPersonalSupervision() && resource.data.creadoPor == request.auth.uid && resource.data.estado == 'borrador');
+
+      function transicionValida(antes, despues) {
+        return antes == despues
+          || (antes == 'borrador' && despues == 'publicado')
+          || (antes == 'publicado' && despues == 'cerrado')
+          || (antes == 'cerrado' && despues == 'publicado');
+      }
+
+      function formularioValido() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['titulo', 'descripcion', 'campos', 'plantelIds', 'fechaLimite', 'estado', 'creadoPor', 'autorNombre', 'creadoEn', 'publicadoEn'])
+          && d.keys().hasAll(['titulo', 'descripcion', 'campos', 'plantelIds', 'fechaLimite', 'estado', 'creadoPor', 'creadoEn'])
+          && d.titulo is string && d.titulo.size() >= 3 && d.titulo.size() <= 150
+          && d.descripcion is string && d.descripcion.size() <= 5000
+          && d.campos is list && d.campos.size() <= 50
+          && d.plantelIds is list && d.plantelIds.size() <= 100
+          && d.fechaLimite is timestamp
+          && d.estado in ['borrador', 'publicado', 'cerrado']
+          && (d.estado == 'borrador' || (d.campos.size() >= 1 && d.plantelIds.size() >= 1))
+          && (!('autorNombre' in d) || d.autorNombre is string)
+          && (!('publicadoEn' in d) || d.publicadoEn is timestamp);
+      }
+    }
+
+    // ---------- respuestas (RF-08, RF-09, RF-10) · actividades 11 y 12 ----------
+    // Una respuesta por plantel y formulario. ID del documento: {formularioId}_{plantelId}.
+    match /respuestas/{respuestaId} {
+
+      function formulario(id) {
+        return get(/databases/$(database)/documents/formularios/$(id)).data;
+      }
+
+      // Lectura: supervisión ve todas (concentrado); la directora, solo la de su plantel.
+      // La comparación con el ID permite consultar una respuesta que aún no existe.
+      allow read: if esPersonalSupervision()
+        || (esDirectora() && respuestaId.matches('^[A-Za-z0-9]+_' + perfil().plantelId + '$'))
+        || (esDirectora() && resource.data.plantelId == perfil().plantelId);
+
+      allow create: if esDirectora() && respuestaValida()
+        && request.resource.data.enviadoEn == request.time;
+
+      // Modificar la respuesta mientras el formulario siga publicado.
+      allow update: if esDirectora() && respuestaValida()
+        && resource.data.plantelId == perfil().plantelId
+        && request.resource.data.enviadoEn == resource.data.enviadoEn;
+
+      allow delete: if false;
+
+      function respuestaValida() {
+        let d = request.resource.data;
+        let f = formulario(d.formularioId);
+        return d.keys().hasOnly(['formularioId', 'plantelId', 'valores', 'enviadoPor', 'enviadoEn', 'actualizadoEn'])
+          && respuestaId == d.formularioId + '_' + d.plantelId
+          && d.plantelId == perfil().plantelId
+          && f.estado == 'publicado'
+          && f.plantelIds.hasAny([d.plantelId])
+          && d.valores is map && d.valores.size() <= 50
+          && d.enviadoPor == request.auth.uid
+          && d.actualizadoEn == request.time;
+      }
+    }
+
+    // Todo lo demás queda bloqueado.
     match /{document=**} {
       allow read, write: if false;
     }

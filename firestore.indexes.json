@@ -1,4 +1,13 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "formularios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "plantelIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "estado", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

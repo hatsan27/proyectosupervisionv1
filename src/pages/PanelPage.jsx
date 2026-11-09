@@ -5,6 +5,9 @@ import {
   CalendarDays,
   ChevronRight,
   ClipboardList,
+  FilePlus2,
+  FolderOpen,
+  FileSpreadsheet,
   Info,
   Megaphone,
   PenSquare,
@@ -14,6 +17,8 @@ import PageHeading from '../components/ui/PageHeading';
 import Alert from '../components/ui/Alert';
 import { useAuth } from '../hooks/useAuth';
 import { useAvisos } from '../hooks/useAvisos';
+import { useSolicitudes } from '../hooks/useSolicitudes';
+import { ESTADOS, SOLICITUD_ABIERTA } from '../constants/estados';
 import { usePlanteles } from '../hooks/usePlanteles';
 import { ROLES, ROLE_LABELS } from '../constants/roles';
 import { esDelMesActual, formatoFecha } from '../utils/formatDate';
@@ -22,11 +27,11 @@ import { mensajeDeError } from '../utils/firebaseErrors';
 
 const EXPLICACION = {
   [ROLES.SUPERVISORA]:
-    'Como supervisora puede publicar avisos para todos los planteles o para planteles específicos. Cada directora verá únicamente los avisos que le correspondan.',
+    'Como supervisora puede publicar avisos, solicitar evidencias, actualizar el banco de formatos y aplicar formularios a todos los planteles o a planteles específicos. Cada directora verá únicamente lo que le corresponda.',
   [ROLES.ADMINISTRATIVA]:
-    'Puede consultar los avisos de la zona. La creación de solicitudes y la actualización de formatos se habilitarán en las siguientes etapas.',
+    'Puede consultar los avisos, crear solicitudes y revisar evidencias, actualizar el banco de formatos y diseñar formularios con sus concentrados.',
   [ROLES.DIRECTORA]:
-    'Aquí verá los avisos generales y los dirigidos a su plantel. Próximamente podrá enviar evidencias y responder formularios desde este mismo panel.',
+    'Aquí verá los avisos para su plantel, las solicitudes de evidencia, los formatos vigentes y los formularios por responder.',
 };
 
 function StatCard({ icono: Icono, valor, etiqueta, pie }) {
@@ -63,12 +68,20 @@ export default function PanelPage() {
   const { perfil } = useAuth();
   const { avisos, cargando, error } = useAvisos();
   const { planteles, nombres } = usePlanteles();
+  const { solicitudes, cargando: cargandoSol, estadoDePlantel, avance } = useSolicitudes();
 
   const esSupervisora = perfil.rol === ROLES.SUPERVISORA;
   const esDirectora = perfil.rol === ROLES.DIRECTORA;
   const primerNombre = perfil.nombre?.split(' ')[0] ?? '';
   const recientes = avisos.slice(0, 4);
   const delMes = avisos.filter((a) => esDelMesActual(a.publicadoEn)).length;
+
+  // Directora: solicitudes abiertas sin entregar o en corrección. Supervisión: entregas por revisar.
+  const pendientesSolicitudes = esDirectora
+    ? solicitudes.filter(
+        (s) => s.estado === SOLICITUD_ABIERTA && [ESTADOS.PENDIENTE, ESTADOS.CORRECCION].includes(estadoDePlantel(s.id)),
+      ).length
+    : solicitudes.reduce((total, s) => total + avance(s).porRevisar, 0);
 
   return (
     <>
@@ -99,7 +112,12 @@ export default function PanelPage() {
           etiqueta={esDirectora ? 'Su plantel' : 'Planteles de la zona'}
           pie={esDirectora ? perfil.plantelNombre : 'Registrados en la plataforma'}
         />
-        <StatCard icono={ClipboardList} valor="—" etiqueta="Solicitudes pendientes" pie="Disponible en la siguiente etapa" />
+        <StatCard
+          icono={ClipboardList}
+          valor={cargandoSol ? '…' : pendientesSolicitudes}
+          etiqueta={esDirectora ? 'Solicitudes pendientes' : 'Entregas por revisar'}
+          pie={esDirectora ? 'Por enviar o corregir' : 'Archivos recibidos sin revisar'}
+        />
       </div>
 
       <div className="dashboard-columns">
@@ -142,7 +160,22 @@ export default function PanelPage() {
             <QuickLink to="/avisos/nuevo" icono={PenSquare} titulo="Publicar un aviso" detalle="Redactar y elegir destinatarios" />
           )}
           <QuickLink to="/avisos" icono={Megaphone} titulo="Consultar avisos" detalle="Ver los comunicados disponibles" />
-          <QuickLink to="/solicitudes" icono={ClipboardList} titulo="Solicitudes y evidencias" detalle="Próximamente" />
+          {!esDirectora && (
+            <QuickLink to="/solicitudes/nueva" icono={FilePlus2} titulo="Solicitar evidencia" detalle="Pedir un documento a los planteles" />
+          )}
+          <QuickLink
+            to="/solicitudes"
+            icono={ClipboardList}
+            titulo={esDirectora ? 'Enviar evidencias' : 'Revisar entregas'}
+            detalle={esDirectora ? 'Solicitudes para su plantel' : 'Avance de las solicitudes'}
+          />
+          <QuickLink to="/formatos" icono={FolderOpen} titulo="Banco de formatos" detalle="Consultar y descargar formatos vigentes" />
+          <QuickLink
+            to="/formularios"
+            icono={FileSpreadsheet}
+            titulo={esDirectora ? 'Responder formularios' : 'Formularios y concentrados'}
+            detalle={esDirectora ? 'Información que pide la Supervisión' : 'Diseñar, publicar y exportar'}
+          />
 
           <div className="explain-strip">
             <Info size={17} aria-hidden="true" />

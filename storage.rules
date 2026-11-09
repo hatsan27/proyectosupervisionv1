@@ -1,0 +1,89 @@
+rules_version = '2';
+
+// Reglas de seguridad de Cloud Storage · Supervisión Escolar 072 (actividades 9 y 10).
+// Evidencias: entregas/{solicitudId}/{plantelId}/{archivo}
+// Banco de formatos: formatos/{formatoId}/{archivo}
+// Los permisos se calculan con el perfil guardado en Firestore (usuarios/{uid}).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function perfilRef() {
+      return /databases/(default)/documents/usuarios/$(request.auth.uid);
+    }
+    function perfil() {
+      return firestore.get(perfilRef()).data;
+    }
+    function usuarioActivo() {
+      return request.auth != null && firestore.exists(perfilRef()) && perfil().activo == true;
+    }
+    function esPersonalSupervision() {
+      return usuarioActivo() && perfil().rol in ['supervisora', 'administrativa'];
+    }
+    function esDirectoraDe(plantelId) {
+      return usuarioActivo() && perfil().rol == 'directora' && perfil().plantelId == plantelId;
+    }
+    function solicitudAbiertaPara(solicitudId, plantelId) {
+      let sol = firestore.get(/databases/(default)/documents/solicitudes/$(solicitudId)).data;
+      return sol.estado == 'abierta' && sol.plantelIds.hasAny([plantelId]);
+    }
+    function entregaNoAceptada(solicitudId, plantelId) {
+      let ruta = /databases/(default)/documents/entregas/$(solicitudId + '_' + plantelId);
+      return !firestore.exists(ruta) || firestore.get(ruta).data.estado != 'aceptado';
+    }
+    // PDF, imágenes y documentos de Office (Word, Excel, PowerPoint).
+    function tipoPermitido() {
+      return request.resource.contentType.matches('application/pdf')
+        || request.resource.contentType.matches('image/.*')
+        || request.resource.contentType.matches('application/msword')
+        || request.resource.contentType.matches('application/vnd[.]ms-excel')
+        || request.resource.contentType.matches('application/vnd[.]ms-powerpoint')
+        || request.resource.contentType.matches('application/vnd[.]openxmlformats-officedocument[.].*');
+    }
+
+    match /entregas/{solicitudId}/{plantelId}/{archivo} {
+      // Descarga: personal de supervisión o la directora del plantel.
+      allow read: if esPersonalSupervision() || esDirectoraDe(plantelId);
+
+      // Carga: la directora del plantel, solicitud abierta, máximo 10 MB y tipo permitido.
+      allow create: if esDirectoraDe(plantelId)
+        && solicitudAbiertaPara(solicitudId, plantelId)
+        && entregaNoAceptada(solicitudId, plantelId)
+        && request.resource.size <= 10 * 1024 * 1024
+        && tipoPermitido();
+
+      // Eliminación del archivo anterior al reenviar (si no fue aceptado).
+      allow delete: if esDirectoraDe(plantelId) && entregaNoAceptada(solicitudId, plantelId);
+
+      allow update: if false;
+    }
+
+    function formatoVigente(formatoId) {
+      let ruta = /databases/(default)/documents/formatos/$(formatoId);
+      return firestore.exists(ruta) && firestore.get(ruta).data.vigente == true;
+    }
+    // Formatos: PDF y documentos de Office (sin imágenes).
+    function tipoFormato() {
+      return request.resource.contentType.matches('application/pdf')
+        || request.resource.contentType.matches('application/msword')
+        || request.resource.contentType.matches('application/vnd[.]ms-excel')
+        || request.resource.contentType.matches('application/vnd[.]ms-powerpoint')
+        || request.resource.contentType.matches('application/vnd[.]openxmlformats-officedocument[.].*');
+    }
+
+    match /formatos/{formatoId}/{archivo} {
+      // Descarga: supervisión siempre; cualquier cuenta activa si el formato está vigente.
+      allow read: if esPersonalSupervision() || (usuarioActivo() && formatoVigente(formatoId));
+      // Carga y sustitución: supervisión, máximo 10 MB.
+      allow create: if esPersonalSupervision()
+        && request.resource.size <= 10 * 1024 * 1024
+        && tipoFormato();
+      allow delete: if esPersonalSupervision();
+      allow update: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
